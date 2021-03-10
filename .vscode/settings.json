@@ -1,0 +1,5 @@
+{
+    "python.pythonPath": "/home/haavard/.pyenv/versions/master-thesis/bin/python",
+    "python.linting.pylintEnabled": true,
+    "python.linting.enabled": true
+}

@@ -1,0 +1,9 @@
+tensorflow>2.3
+tensorflow-probability
+numpy~=1.19.2
+matplotlib
+pandas
+geopandas
+google-cloud-bigquery
+google-cloud-bigquery-storage
+pyarrow
