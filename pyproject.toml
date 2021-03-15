@@ -1,7 +1,9 @@
 [build-system]
 requires = [
     "geopandas",
+    "numpy",
     "google-cloud-bigquery",
-    "google-cloud-bigquery-storage"
+    "google-cloud-bigquery-storage",
+    "contextily"
 ]
 build-backend = "setuptools.build_meta"

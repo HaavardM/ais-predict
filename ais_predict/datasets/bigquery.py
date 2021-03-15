@@ -5,7 +5,7 @@ import google.auth
 from shapely.geometry.polygon import Polygon
 import shapely.wkt
 
-def download(limit: int = 1000, within: Polygon=None, mmsi: list = None, project_id: str="master-thesis-305112" ,credentials=None) -> gpd.GeoDataFrame:
+def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None, project_id: str="master-thesis-305112" ,credentials=None) -> gpd.GeoDataFrame:
     """Creates a query job in Bigquery and downloades the result into a GeoPandas Dataframe
     
 
@@ -25,32 +25,39 @@ def download(limit: int = 1000, within: Polygon=None, mmsi: list = None, project
     # Make clients.
     bq = bigquery.Client(credentials=credentials, project=project_id,)
     bqstorage = bigquery_storage.BigQueryReadClient(credentials=credentials)
-
+    lead += 1
     limit = "LIMIT " + str(limit) if limit else ""
-    within = f"AND ST_WITHIN(ST_GEOGPOINT(current_sample.long, current_sample.lat), ST_GEOGFROMTEXT('{str(within)}'))" if within else ""
+    within = f"AND ST_WITHIN(sample_0.position, ST_GEOGFROMTEXT('{str(within)}'))" if within else ""
     mmsi = "'" + "','".join(mmsi) + "'" if mmsi else None
     mmsi = f"AND CAST(mmsi AS STRING) IN ({mmsi})" if mmsi else ""
-    query = f"""
-    SELECT
-    mmsi,
-    UNIX_SECONDS(current_sample.timestamp) AS unix_timestamp,
-    current_sample.cog AS cog,
-    current_sample.sog AS sog,
-    ST_GEOGPOINT(current_sample.long, current_sample.lat) AS geometry,
-    UNIX_SECONDS(previous_sample.timestamp) AS prev_unix_timestamp,
-    previous_sample.cog AS prev_cog,
-    previous_sample.sog AS prev_sog,
-    ST_GEOGPOINT(previous_sample.long, previous_sample.lat) AS prev_geometry,
-    FROM `master-thesis-305112.ais.raw_with_prev`
-    WHERE previous_sample.timestamp IS NOT NULL
-    AND TIMESTAMP_DIFF(current_sample.timestamp, previous_sample.timestamp, MINUTE) < 30
-    {within}
-    {mmsi}
-    ORDER BY mmsi, current_sample.timestamp
-    {limit}
-    """
+
+    # Select samples
+    query = f"SELECT mmsi"
+    for l in range(lead):
+        query += f", sample_{l}.* "
+    query += f"FROM `master-thesis-305112.ais.samples_with_lead`"
+
+    # Filter out bad samples
+    query += "WHERE TRUE"
+    for l in range(lead):
+        query += f" AND sample_{l}.timestamp IS NOT NULL "
+        if l > 0:
+            query += f"AND TIMESTAMP_DIFF(sample_{l}.timestamp, sample_{l-1}.timestamp, MINUTE) < 30"
+    
+    # Additional filters
+    query += f"""
+                {within}
+                {mmsi}
+                ORDER BY mmsi, sample_0.timestamp
+                {limit}
+             """
     df = bq.query(query).result().to_dataframe(bqstorage_client=bqstorage)
-    df.geometry = gpd.GeoSeries.from_wkt(df.geometry, crs="wgs84")
-    df.prev_geometry = gpd.GeoSeries.from_wkt(df.prev_geometry, crs="wgs84")
-    df = gpd.GeoDataFrame(df, geometry="geometry")
+
+    # Convert timestamps and positions to correct dtypes
+    df.position = gpd.GeoSeries.from_wkt(df.position, crs="wgs84")
+    df.timestamp = pd.to_datetime(df.timestamp)
+    for l in range(1, lead):
+        df[f"position_{l}"] = gpd.GeoSeries.from_wkt(df[f"position_{l}"], crs="wgs84")
+        df[f"timestamp_{l}"] = pd.to_datetime(df[f"timestamp_{l}"])
+    df = gpd.GeoDataFrame(df, geometry="position")
     return df
