@@ -26,10 +26,10 @@ def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None,
     bq = bigquery.Client(credentials=credentials, project=project_id,)
     bqstorage = bigquery_storage.BigQueryReadClient(credentials=credentials)
     lead += 1
-    limit = "LIMIT " + str(limit) if limit else ""
-    within = f"AND ST_WITHIN(sample_0.position, ST_GEOGFROMTEXT('{str(within)}'))" if within else ""
-    mmsi = "'" + "','".join(mmsi) + "'" if mmsi else None
-    mmsi = f"AND CAST(mmsi AS STRING) IN ({mmsi})" if mmsi else ""
+    limit = "LIMIT " + str(limit) if limit is not None else ""
+    within = f"AND ST_WITHIN(sample_0.position, ST_GEOGFROMTEXT('{str(within)}'))" if within is not None else ""
+    mmsi = "'" + "','".join(mmsi) + "'" if mmsi is not None else None
+    mmsi = f"AND CAST(mmsi AS STRING) IN ({mmsi})" if mmsi is not None else ""
 
     # Select samples
     query = f"SELECT mmsi"
