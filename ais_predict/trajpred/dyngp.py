@@ -1,5 +1,4 @@
 import numpy as np
-import tensorflow as tf
 import gpflow as gpf
 import geopandas as gdp
 
@@ -20,7 +19,6 @@ def samples_from_lag_1_df(df: gdp.GeoDataFrame) -> tuple:
     return X, Y, dt.to_numpy()
 
 
-
 class DynGP():
     def __init__(self, x: np.ndarray, dy: np.ndarray):
         """ Constructor for dynamical GP prediction
@@ -33,15 +31,25 @@ class DynGP():
          
         """
 
-        #assert x.shape[-1] == 4, f"Unexpected sample dimension, only expected 4 but got {x.shape[-1]}"
-        #assert dy.shape[-1] == 2, f"Unexpected sample dimention, only expected 2 but got {dy.shape[-1]}"
+        assert x.shape[-1] == 4, f"Unexpected sample dimension, only expected 4 but got {x.shape[-1]}"
+        assert dy.shape[-1] == 2, f"Unexpected sample dimention, only expected 2 but got {dy.shape[-1]}"
         self.x = x
         self.dy = dy
         kernel = gpf.kernels.Matern12(active_dims=[0, 1], lengthscales=10000) * gpf.kernels.RBF(active_dims=[2], lengthscales=2)*gpf.kernels.RBF(active_dims=[3], lengthscales=2)
         self.gpx = gpf.models.GPR((x, dy[:, 0].reshape((-1, 1))), kernel, noise_variance=1e-4)
         self.gpy = gpf.models.GPR((x, dy[:, 1].reshape((-1, 1))), kernel, noise_variance=1e-4)
+        
     
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: np.ndarray) -> (np.ndarray, np.ndarray):
         pred_x, std_x = self.gpx.predict_f(x)
         pred_y, std_y = self.gpy.predict_f(x)
-        return tf.concat([pred_x, pred_y], axis=1).numpy(), tf.concat([std_x, std_y], axis=1).numpy()
+        return np.concatenate([pred_x.numpy(), pred_y.numpy()], axis=1), np.concatenate([std_x.numpy(), std_y.numpy()], axis=1)
+
+
+def simulate(f: DynGP, x_0: np.ndarray, n, dt=0.1) -> np.ndarray:
+    x = np.empty((n,) + x_0.shape)
+    x[0] = x_0
+    for i in range(1,n):
+        x[i] = x[i-1] + f(x[i-1])*dt
+    return x
+
