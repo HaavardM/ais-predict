@@ -5,7 +5,7 @@ import google.auth
 from shapely.geometry.polygon import Polygon
 import shapely.wkt
 
-def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None, project_id: str="master-thesis-305112" ,credentials=None) -> gpd.GeoDataFrame:
+def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None, min_knots: int = None, project_id: str="master-thesis-305112" ,credentials=None) -> gpd.GeoDataFrame:
     """Creates a query job in Bigquery and downloades the result into a GeoPandas Dataframe
     
 
@@ -41,6 +41,7 @@ def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None,
     query += "WHERE TRUE"
     for l in range(lead):
         query += f" AND sample_{l}.timestamp IS NOT NULL "
+        query += f" AND sample_{l}.sog >= {min_knots} " if min_knots is not None else ""
         if l > 0:
             query += f"AND TIMESTAMP_DIFF(sample_{l}.timestamp, sample_{l-1}.timestamp, MINUTE) < 30"
     

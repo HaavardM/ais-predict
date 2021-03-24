@@ -28,10 +28,23 @@ def samples_from_lag_n_df(df: gpd.GeoDataFrame, n: int):
 
 
 class PosGP():
-    def __init__(self, X: np.ndarray, Y: np.ndarray):
-        kernel = gpf.kernels.RBF(variance=10, active_dims=[0, 1], lengthscales=1100) * gpf.kernels.RBF(variance=100, active_dims=[2], lengthscales=1) * gpf.kernels.RBF(variance=100, active_dims=[3], lengthscales=5) * gpf.kernels.RBF(variance=1, active_dims=[4], lengthscales=1000)
-        self.gpx = gpf.models.GPR((X, Y[:, 0].reshape((-1, 1))), kernel, mean_function=lambda x: tf.reshape(x[:, 0], (-1, 1)), noise_variance=0.01)
-        self.gpy = gpf.models.GPR((X, Y[:, 1].reshape((-1, 1))), kernel, mean_function=lambda x: tf.reshape(x[:, 1], (-1, 1)), noise_variance=0.01)
+
+    def __init__(self, X: np.ndarray, Y: np.ndarray, variance=50):
+        self.kernel = gpf.kernels.Constant(variance=variance) * (
+            gpf.kernels.RBF(active_dims=[0, 1], lengthscales=200) * 
+            gpf.kernels.RBF(active_dims=[2], lengthscales=2) *
+            gpf.kernels.RBF(active_dims=[3], lengthscales=2) * (
+                #gpf.kernels.Matern12(variance=1, active_dims=[4], lengthscales=60) + 
+                gpf.kernels.RBF(active_dims=[4], lengthscales=500)
+            ) 
+            #+ (
+            #    gpf.kernels.Linear(variance=1 / ((20*60)**2), active_dims=[4]) * 
+            #    gpf.kernels.White(variance=10, active_dims=[4])
+            #)
+            #gpf.kernels.RBF(variance=5000, active_dims=[4], lengthscales=4000)
+        )
+        self.gpx = gpf.models.GPR((X, Y[:, 0].reshape((-1, 1))), self.kernel, mean_function=lambda x: tf.reshape(x[:, 0], (-1, 1)), noise_variance=1)
+        self.gpy = gpf.models.GPR((X, Y[:, 1].reshape((-1, 1))), self.kernel, mean_function=lambda x: tf.reshape(x[:, 1], (-1, 1)), noise_variance=1)
 
         #optimizer = gpf.optimizers.Scipy()
         #optimizer.minimize(self.gpx.training_loss, self.gpx.trainable_variables)
