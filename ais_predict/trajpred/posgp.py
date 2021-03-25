@@ -28,27 +28,50 @@ def samples_from_lag_n_df(df: gpd.GeoDataFrame, n: int):
 
 
 class PosGP():
+    def __init__(self, X: np.ndarray, Y: np.ndarray, variance: float=50, center: np.ndarray = None, N: int = None):
+        """ Constructor for PosGP
 
-    def __init__(self, X: np.ndarray, Y: np.ndarray, variance=50):
+        Parameters:
+        X (numpy.ndarray): Training inputs on the form (n, 5) where the innermost dimension corresponds to [p_x, p_y, cog, sog, t]
+        Y (numpy.ndarray): Training outputs on the form (n, 2) where the innermost dimension is the true position at time t
+        variance (float): Kernel amplitude/variance
+        center (numpy.ndarray): Position used to calculate distance to each position in X. Used to sort the input data by distance.
+        N (int): Number of samples to include in the model. If N is less than the number of samples in (X, Y), N samples are collected. If center != None, the N samples with shortest distance between center and X[:, :2] are used, otherwise random.
+        """
+        assert X.shape[0] == Y.shape[0], "Shapes not matching"
+        N = N if N is not None else X.shape[0]
+        if N < X.shape[0]:
+            if center is not None:
+                # Sort the indicies by distance and pick the first N
+                dist = np.linalg.norm(X[:, :2]-center, axis=1)
+                ix = np.argsort(dist)[:N]
+            else:
+                # Randomly select N samples
+                ix = np.random.choice(N, size=N, replace=False)
+            X = X[ix, :]
+            Y = Y[ix, :]
+        
+        
         self.kernel = gpf.kernels.Constant(variance=variance) * (
             gpf.kernels.RBF(active_dims=[0, 1], lengthscales=200) * 
             gpf.kernels.RBF(active_dims=[2], lengthscales=2) *
             gpf.kernels.RBF(active_dims=[3], lengthscales=2) * (
-                #gpf.kernels.Matern12(variance=1, active_dims=[4], lengthscales=60) + 
-                gpf.kernels.RBF(active_dims=[4], lengthscales=500)
+                gpf.kernels.Matern32(active_dims=[4], lengthscales=500)
             ) 
-            #+ (
-            #    gpf.kernels.Linear(variance=1 / ((20*60)**2), active_dims=[4]) * 
-            #    gpf.kernels.White(variance=10, active_dims=[4])
-            #)
-            #gpf.kernels.RBF(variance=5000, active_dims=[4], lengthscales=4000)
         )
-        self.gpx = gpf.models.GPR((X, Y[:, 0].reshape((-1, 1))), self.kernel, mean_function=lambda x: tf.reshape(x[:, 0], (-1, 1)), noise_variance=1)
-        self.gpy = gpf.models.GPR((X, Y[:, 1].reshape((-1, 1))), self.kernel, mean_function=lambda x: tf.reshape(x[:, 1], (-1, 1)), noise_variance=1)
 
-        #optimizer = gpf.optimizers.Scipy()
-        #optimizer.minimize(self.gpx.training_loss, self.gpx.trainable_variables)
-        #optimizer.minimize(self.gpy.training_loss, self.gpy.trainable_variables)
+        self.gpx = gpf.models.GPR(
+            data=(X, Y[:, 0].reshape((-1, 1))), 
+            kernel=self.kernel, 
+            mean_function=lambda x: tf.reshape(x[:, 0], (-1, 1)), 
+            noise_variance=1
+        )
+        self.gpy = gpf.models.GPR(
+            data=(X, Y[:, 1].reshape((-1, 1))), 
+            kernel=self.kernel, 
+            mean_function=lambda x: tf.reshape(x[:, 1], (-1, 1)), 
+            noise_variance=1
+        )
 
     def __call__(self, x: np.ndarray):
         pred_x, std_x = self.gpx.predict_f(x)
