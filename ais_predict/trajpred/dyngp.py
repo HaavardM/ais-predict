@@ -35,10 +35,19 @@ def kernel(X1: np.ndarray, X2: np.ndarray, sigma: float, lengthscale: float) -> 
         d = (X1 - X2[i]) / lengthscale
         norm_dist_squared = np.sum(d * d, axis=1)
         K[i] = np.exp(-norm_dist_squared)
-    return sigma * K
+    return (sigma**2) * K
+
+@njit(nogil=True)
+def dkernel(X1: np.ndarray, X2:np.ndarray, sigma: float, lengthscale: float) -> np.ndarray:
+    K = np.empty((X1.shape[0], X2.shape[0], X1.shape[-1]))
+    for d in range(K.shape[-1]):
+        K[:, :, d] = (-(X1[:, d] - X2[:, d]) * kernel(X1, X2, sigma, lengthscale).T)
+    return K / lengthscale
 
 @njit(nogil=True)
 def solve_lower_triangular(L: np.ndarray, b: np.ndarray, lower: bool = True, replace_b: bool = False) -> np.ndarray:
+    """ Solve linear system Lx=b using forward or backward substitution, assuming L is either lower (lower==True) or upper triangular
+    """
     if not replace_b:
         b = b.copy()
     if lower:
@@ -50,7 +59,7 @@ def solve_lower_triangular(L: np.ndarray, b: np.ndarray, lower: bool = True, rep
     return b
 
 @njit(nogil=True)
-def init(train_x: np.ndarray, train_delta_y: np.ndarray,  sigma: float, lengthscale: float, noise: float)->np.ndarray:
+def init(train_x: np.ndarray, train_delta_y: np.ndarray,  sigma: float, lengthscale: float, noise: float)->tuple:
     k = kernel(
         X1=train_x, 
         X2=train_x,
@@ -60,13 +69,38 @@ def init(train_x: np.ndarray, train_delta_y: np.ndarray,  sigma: float, lengthsc
     L = np.linalg.cholesky(k + noise * np.eye(k.shape[0]))
     alpha = solve_lower_triangular(L, train_delta_y)
     alpha = solve_lower_triangular(L.T, alpha, lower=False)
-    return L, alpha
+    return L, alpha, train_x
 
-@njit(nogil=True, parallel=True)
+@njit(nogil=True)
+def predict(ctx: tuple, pred_x: np.ndarray, sigma: float, lengthscale: float) -> tuple:
+    """ Evaluates the function f, conditioned on training samples in ctx """
+    L, alpha, train_x = ctx
+    k = kernel(
+        X1=pred_x, 
+        X2=train_x, 
+        sigma=sigma,
+        lengthscale=lengthscale
+    )
+    mean = (k.T @ alpha)
+    v = solve_lower_triangular(L, k, replace_b=True)
+    var = kernel(
+        X1=pred_x,
+        X2=pred_x,
+        sigma=sigma,
+        lengthscale=lengthscale
+    ) - v.T @ v
+    return mean, var
+
+def predict_G(ctx: tuple, pred_x: np.ndarray, sigma: float, lengthscale: float) -> np.ndarray:
+    _, alpha, train_x = ctx
+    dk = dkernel(pred_x, train_x, sigma, lengthscale)
+    return dk.transpose((0, 2, 1)) @ alpha
+
+#@njit(nogil=True)
 def dyngp_kalman(train_x: np.ndarray, train_delta_y: np.ndarray, init_x: np.ndarray, sigma: float, lengthscale: float, noise: float, steps: int = 1000, dt: float = 1) -> np.ndarray:
     N_trajectories = init_x.shape[0]
     
-    L, alpha = init(
+    ctx = init(
         train_x=train_x, 
         train_delta_y=train_delta_y, 
         sigma=sigma, 
@@ -75,25 +109,25 @@ def dyngp_kalman(train_x: np.ndarray, train_delta_y: np.ndarray, init_x: np.ndar
     )
 
     x = np.empty((N_trajectories, steps) + (init_x.shape[-1],))
-    var = np.empty((N_trajectories, steps, 2))
-    var[:, 0] = noise**2
+    var = np.empty((N_trajectories, steps, 2, 2))
+    var[:, 0] = np.eye(2)
     x[:, 0] = init_x 
     for traj in prange(N_trajectories):
         for i in range(1, steps):
-            k = kernel(
-                X1=x[traj, i-1, :].reshape((1, -1)), 
-                X2=train_x, 
+            m, v = predict(
+                ctx=ctx, 
+                pred_x=x[traj, i-1, :].reshape((1, -1)),
                 sigma=sigma,
                 lengthscale=lengthscale
             )
-            x[traj][i] = x[traj, i-1, :] + (k.T @ alpha)*dt
-            v = solve_lower_triangular(L, k, replace_b=True)
-            var[traj][i] = kernel(
-                X1=x[traj, i-1, :].reshape((1, -1)), 
-                X2=x[traj, i-1, :].reshape((1, 2)), 
+            x[traj, i, :] = x[traj, i-1, :] + m * dt
+            G = predict_G(
+                ctx=ctx, 
+                pred_x=x[traj, i-1, :].reshape((1, -1)),
                 sigma=sigma,
                 lengthscale=lengthscale
-            ) - v.T @ v
+            )[0]
+            var[traj, i] = G @ var[traj, i-1] @ G.T + np.eye(2)*v
     return x, var
 
 import matplotlib.pyplot as plt
@@ -110,7 +144,7 @@ def plot_uncertianty_grid(train_x: np.ndarray, train_delta_y: np.ndarray, sigma:
     size (tuple): number of x and y values between xlim and ylim
     noise (tuple): measurement noise in training samples 
     """
-    L, alpha = init(
+    ctx = init(
         train_x=train_x, 
         train_delta_y=train_delta_y, 
         sigma=sigma,
@@ -126,11 +160,8 @@ def plot_uncertianty_grid(train_x: np.ndarray, train_delta_y: np.ndarray, sigma:
         y1:y2:(y2-y1)/sy
     ]
     pred_x = np.vstack([pX.ravel(), pY.ravel()]).T
-    k = kernel(pred_x, train_x, lengthscale=lengthscale, sigma=sigma)
-    pred_f = k.T @ alpha
-    v = solve_lower_triangular(L, k, replace_b=True)
-    pred_var = kernel(pred_x, pred_x, lengthscale=lengthscale, sigma=sigma) - v.T @ v
-    std = np.sqrt(pred_var.diagonal()).reshape(size)
+    mean, var = predict(ctx, pred_x, sigma=sigma, lengthscale=lengthscale)
+    std = np.sqrt(var.diagonal()).reshape(size)
     plt.pcolormesh(pX, pY, std, cmap="Greys", shading="gouraud")
     #plt.quiver(*pred_x.T, *pred_f.T)
     plt.quiver(*train_x.T, *train_delta_y.T, color="red", alpha=0.1)
@@ -145,7 +176,7 @@ if __name__ == "__main__":
     import sys
 
 
-    theta, r = np.mgrid[-np.pi:np.pi:0.001, 0:1:0.001]
+    theta, r = np.mgrid[-np.pi:np.pi:0.1, 0:1:0.1]
     X = np.cos(theta)*r
     Y = np.sin(theta)*r
     X = np.vstack([X.T.ravel(), Y.T.ravel()]).T
@@ -153,40 +184,12 @@ if __name__ == "__main__":
     X = X[msk]
     DY = X[1:] - X[:-1]
     DY /= np.linalg.norm(DY, axis=1).reshape((-1, 1))
-    print(DY)
+    #print(DY)
     X = X[:-1]
     msk = np.random.choice(X.shape[0], 20)
     X = X[msk, :]
     DY = DY[msk, :]
-    print(DY.shape, X.shape)
 
-    plot_uncertianty_grid(
-        train_x=X, 
-        train_delta_y=DY, 
-        sigma=10, 
-        lengthscale=0.3,
-        noise=0.1
-    )
-    plt.savefig("grid.png")
 
-    sys.exit()
-    f, std = dyngp_kalman(
-        train_x=X, 
-        train_delta_y=DY, 
-        init_x=np.array([[0.5, 0.0], [0.0, 0.7], [1.0, 1.0]]), 
-        noise=0.1, 
-        sigma=1,
-        lengthscale=1, 
-        dt=0.1, 
-        steps=10000
-    )
-    print(f.shape)
-    import matplotlib.pyplot as plt
-    #plt.plot(*Y.T, color="black")
-    plt.quiver(*X.T, *DY.T, color="black")
-    for traj in range(f.shape[0]):
-        print("traj", traj)
-        T = f[traj, :, :]
-        print(np.min(T), np.max(T))
-        plt.plot(T[:, 0], T[:, 1])
-    plt.savefig("test2.png")
+
+
