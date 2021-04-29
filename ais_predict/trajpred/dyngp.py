@@ -112,7 +112,7 @@ def sample_f(ctx: tuple, pred_x: np.ndarray, sigma: float, lengthscale: float) -
     )
     return np.random.normal(loc=f, scale=std)
 
-#@njit(nogil=True)
+@njit(nogil=True)
 def dyngp_kalman(train_x: np.ndarray, train_delta_y: np.ndarray, init_x: np.ndarray, sigma: float, lengthscale: float, noise: float, steps: int = 1000, dt: float = 1) -> np.ndarray:
     N_trajectories = init_x.shape[0]
     
