@@ -8,3 +8,4 @@ pyarrow
 contextily
 sklearn
 numba
+seaborn
