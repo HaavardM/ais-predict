@@ -74,9 +74,11 @@ def init(train_x: np.ndarray, train_delta_y: np.ndarray,  sigma: float, lengthsc
     return L, alpha, train_x
 
 @njit(nogil=True)
-def predict(ctx: tuple, pred_x: np.ndarray, sigma: float, lengthscale: float) -> tuple:
+def _predict(ctx: tuple, pred_x: np.ndarray, sigma: float, lengthscale: float) -> tuple:
     """ Evaluates the function f, conditioned on training samples in ctx """
     L, alpha, train_x = ctx
+
+    pred_x = pred_x.reshape((-1, 2))
     k = kernel(
         X1=pred_x, 
         X2=train_x, 
@@ -94,8 +96,10 @@ def predict(ctx: tuple, pred_x: np.ndarray, sigma: float, lengthscale: float) ->
     return mean, var
 
 @njit(nogil=True)
-def predict_F(ctx: tuple, pred_x: np.ndarray, sigma: float, lengthscale: float) -> np.ndarray:
+def _predict_F(ctx: tuple, pred_x: np.ndarray, sigma: float, lengthscale: float) -> np.ndarray:
     _, alpha, train_x = ctx
+
+    pred_x = pred_x.reshape((-1, 2))
     dk = dkernel(pred_x, train_x, sigma, lengthscale)
     G = np.empty((pred_x.shape[0], pred_x.shape[-1], pred_x.shape[-1]))
     for t in prange(dk.shape[0]):
@@ -104,7 +108,7 @@ def predict_F(ctx: tuple, pred_x: np.ndarray, sigma: float, lengthscale: float) 
 
 #@njit(nogil=True)
 def sample_f(ctx: tuple, pred_x: np.ndarray, sigma: float, lengthscale: float) -> np.ndarray:
-    f, std = predict(
+    f, std = _predict(
         ctx=ctx, 
         pred_x=pred_x, 
         sigma=sigma, 
@@ -112,40 +116,49 @@ def sample_f(ctx: tuple, pred_x: np.ndarray, sigma: float, lengthscale: float) -
     )
     return np.random.normal(loc=f, scale=std)
 
-@njit(nogil=True)
-def dyngp_kalman(train_x: np.ndarray, train_delta_y: np.ndarray, init_x: np.ndarray, sigma: float, lengthscale: float, noise: float, steps: int = 1000, dt: float = 1) -> np.ndarray:
-    N_trajectories = init_x.shape[0]
-    
-    ctx = init(
-        train_x=train_x, 
-        train_delta_y=train_delta_y, 
-        sigma=sigma, 
-        lengthscale=lengthscale,
-        noise=noise
-    )
+def kf_log_likelihood(v: np.ndarray, S: np.ndarray) -> np.ndarray:
+    v = v.T.reshape((-1, 2, 1))
+    nis = v.transpose(0, 2, 1) @ np.linalg.solve(S, v) # (N x 1 x 1)
+    nis = nis.flatten() # (N,)
+    return - 0.5 * (nis + np.log(2.0 * np.pi * np.linalg.det(S)))
 
-    x = np.empty((N_trajectories, steps) + (init_x.shape[-1],))
-    var = np.empty((N_trajectories, steps, 2, 2))
-    var[:, 0] = np.eye(2)
-    x[:, 0] = init_x 
-    dt_squared_eye = np.eye(2) * dt ** 2
-    for traj in prange(N_trajectories):
-        for i in range(1, steps):
-            m, v = predict(
-                ctx=ctx, 
-                pred_x=x[traj, i-1, :].reshape((1, -1)),
-                sigma=sigma,
-                lengthscale=lengthscale
-            )
-            x[traj, i, :] = x[traj, i-1, :] + m * dt
-            F = predict_F(
-                ctx=ctx, 
-                pred_x=x[traj, i-1, :].reshape((1, -1)),
-                sigma=sigma,
-                lengthscale=lengthscale
-            )[0] * dt
-            var[traj, i] = F.T @ var[traj, i-1] @ F + v * dt_squared_eye
-    return x, var
+def _pdaf_update(x_hat: np.ndarray, P_hat: np.ndarray, z: np.ndarray, R: np.ndarray, clutter_rate: float, p_d: float) -> tuple:
+
+    # Prepare constants
+    logClutter = np.log(clutter_rate)
+    logPD = np.log(p_d)
+    logPND = np.log(1 - p_d)
+
+    # Reshape values to follow linalg conventions
+    x_hat = x_hat.reshape((2, 1)) # Column vector
+    z = z.T # (2 x N)
+
+    assert z.shape[0] == 2
+    assert x_hat.shape[0] == 2
+    
+    ll = np.empty(z.shape[1]+1)
+    vs = (z - x_hat) # (2 x N) innovation vector, one row for each measurement z
+    S = P_hat + R # (2 x 2)
+    ll[0] = logPND + logClutter
+    ll[1:] = kf_log_likelihood(vs, S) + logPD
+    beta = np.exp(ll)
+    beta /= np.sum(beta)
+    vk = np.sum(beta[1:].reshape((1, -1)) * vs, axis=1).reshape((2, 1))
+    W = P_hat @ np.linalg.inv(S)
+
+
+    # P with moment matching
+    v = vs.T.reshape((-1, 2, 1)) # (N x 2 x 1)
+    v = beta[1:].reshape((-1, 1, 1)) * (v @ v.transpose(0, 2, 1)) # (N x 2 x 2)
+    v = np.sum(v, axis=0) - vk @ vk.T # (2 x 2)
+    v = W @ v @ W.T
+    P = P_hat - (1-beta[0]) * W @ S @ W + v
+    # X with moment matching
+    x = x_hat+ W @ vk # (2 x 1) updated state vector x
+    return x.flatten(), P
+
+
+
 
 def dyngp_particle(train_x: np.ndarray, train_delta_y: np.ndarray, init_x: np.ndarray, sigma: float, lengthscale: float, noise: float, steps: int = 1000, dt: float = 1, particles: int = 1000) -> np.ndarray:
     ctx = init(
@@ -161,6 +174,61 @@ def dyngp_particle(train_x: np.ndarray, train_delta_y: np.ndarray, init_x: np.nd
         for particle in prange(particles):
             x[step, particle] = x[step-1, particle] + sample_f(ctx, x[step-1, particle].reshape((1, -1)), sigma=sigma, lengthscale=lengthscale)*dt
     return x
+
+class DynGP():
+    def __init__(self, train_x: np.ndarray, train_delta_y: np.ndarray):
+        self._train_x = train_x
+        self._train_delta_y = train_delta_y
+        self.lengthscale = 500
+        self.sigma = 1000
+        self.noise = 100
+        self.R = 1000 * np.eye(2)
+        self.clutter_rate = 1e-3
+        self.p_d = 0.9
+
+    def kalman(self, init_x: np.ndarray, steps: int = 1000, dt: float = 1, pdaf_update: bool = True) -> np.ndarray:
+        assert init_x.shape[-1] == 2
+
+        traj_shape = tuple(init_x.shape[:-1])
+        
+        ctx = init(
+            train_x=self._train_x, 
+            train_delta_y=self._train_delta_y, 
+            sigma=self.sigma, 
+            lengthscale=self.lengthscale,
+            noise=self.noise
+        )
+
+        x = np.empty(traj_shape + (steps, init_x.shape[-1]))
+        var = np.empty(traj_shape + (steps, 2, 2))
+        var[:, 0] = np.eye(2)*1000
+        x[:, 0] = init_x 
+        dt_squared_eye = np.eye(2) * dt ** 2
+        for traj in np.ndindex(traj_shape):
+            for i in range(1, steps):
+                # Predict
+                m, v = _predict(
+                    ctx=ctx, 
+                    pred_x=x[traj + (i-1,)],
+                    sigma=self.sigma,
+                    lengthscale=self.lengthscale
+                )
+                x[traj, i] = x[traj + (i-1,)] + m * dt
+                F = _predict_F(
+                    ctx=ctx, 
+                    pred_x=x[traj + (i-1,)].reshape((1, -1)),
+                    sigma=self.sigma,
+                    lengthscale=self.lengthscale
+                )[0] * dt
+                var[traj + (i,)] = F.T @ var[traj + (i-1,)] @ F + v * dt_squared_eye
+                # Update
+                if pdaf_update:
+                    x[traj + (i,)], var[traj + (i,)] = _pdaf_update(x[traj + (i,)], var[traj + (i,)], self._train_x, self.R, p_d=self.p_d, clutter_rate=self.clutter_rate)
+        return x, var
+    
+    def plot_uncertianty_grid(self, **kwargs):
+        plot_uncertianty_grid(self._train_x, self._train_delta_y, self.sigma, self.lengthscale, self.noise, **kwargs)
+
 
 
 import matplotlib.pyplot as plt
@@ -196,7 +264,7 @@ def plot_uncertianty_grid(train_x: np.ndarray, train_delta_y: np.ndarray, sigma:
     y2 += dY / (sy+1)
     pX, pY = np.meshgrid(np.linspace(x1, x2, sx+1), np.linspace(y1, y2, sy+1))
     pred_x = np.vstack([pX.ravel(), pY.ravel()]).T
-    mean, var = predict(ctx, pred_x, sigma=sigma, lengthscale=lengthscale)
+    mean, var = _predict(ctx, pred_x, sigma=sigma, lengthscale=lengthscale)
     std = np.sqrt(var.diagonal()).reshape((sx+1, sy+1))
     plt.pcolormesh(pX, pY, std, cmap="Greys", shading="gouraud")
     #plt.quiver(*pred_x.T, *pred_f.T)
