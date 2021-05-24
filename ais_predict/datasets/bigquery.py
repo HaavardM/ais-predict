@@ -47,8 +47,7 @@ def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None,
         query += f" AND sample_{l}.timestamp IS NOT NULL "
         query += f" AND sample_{l}.sog >= {min_knots} " if min_knots is not None else ""
         if l > 0:
-            query += f"AND TIMESTAMP_DIFF(sample_{l}.timestamp, sample_{l-1}.timestamp, MINUTE) < 30 "
-    
+            query += f"AND TIMESTAMP_DIFF(sample_{l}.timestamp, sample_{l-1}.timestamp, MINUTE) < 15 "
 
     # Additional filters
     query += f"""
