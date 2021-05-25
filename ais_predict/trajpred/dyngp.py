@@ -2,10 +2,13 @@ from collections import namedtuple
 import matplotlib.pyplot as plt
 import numpy as np
 import geopandas as gpd
-import sklearn.gaussian_process.kernels as kernels
 from scipy.linalg import solve_triangular
-from numba import prange, njit
 from dataclasses import dataclass
+
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process import kernels
+
+from typing import Optional, Tuple
 
 
 def samples_from_lag_n_df(df: gpd.GeoDataFrame, n: int, flatten: bool = True):
@@ -40,30 +43,28 @@ def samples_from_lag_n_df(df: gpd.GeoDataFrame, n: int, flatten: bool = True):
     return X, Y, T
 
 
-@njit(nogil=True, parallel=True)
 def kernel_rbf(X1: np.ndarray, X2: np.ndarray, sigma: float, lengthscale: float) -> np.ndarray:
     K = np.empty((X2.shape[0], X1.shape[0]))
-    for i in prange(X2.shape[0]):
-        d = (X1 - X2[i]) / lengthscale
-        norm_dist_squared = np.sum(d * d, axis=1)
-        K[i] = np.exp(-norm_dist_squared)
+    K = (X1.reshape((1, -1, 2)) - X2.reshape((-1, 1, 2))) / lengthscale
+    K = np.sum(K * K, axis=-1)
+    K = np.exp(-K)
     return (sigma) * K
 
 
 def kernel(X1: np.ndarray, X2: np.ndarray, sigmas: np.ndarray, lengthscales: np.ndarray, weights: np.ndarray = None) -> np.ndarray:
-    """ Computes the kernel for inputs X1 and X2. 
-    
-    The kernel is the sum of n RBF kernels, given by the parameters in the ndarrays sigmas and lengthscales
-    """
-    assert sigmas.ndim == 1
-    assert lengthscales.ndim == 1
 
-    K = np.empty((sigmas.shape[0], X2.shape[0], X1.shape[0]))
-    for i in range(K.shape[0]):
-        K[i] = kernel_rbf(X1, X2, sigmas[i], lengthscales[i])
-    if weights is not None:
-        K = K * weights.reshape((-1, 1, 1))
-    return np.sum(K, axis=0)
+    if weights is None:
+        weights = np.ones_like(sigmas)
+
+    assert sigmas.ndim == 1
+    assert lengthscales.shape == sigmas.shape
+    assert weights.shape == sigmas.shape
+
+    K = np.zeros((X2.shape[0], X1.shape[0]))
+    for i in range(len(sigmas)):
+        K += kernel_rbf(X1, X2, sigmas[i], lengthscales[i]) * weights[i]
+    return K
+
 
 def dkernel(X1: np.ndarray, X2: np.ndarray, sigmas: np.ndarray, lengthscales: np.ndarray) -> np.ndarray:
     assert X1.shape == (1, 2)
@@ -78,7 +79,7 @@ def kf_log_likelihood(v: np.ndarray, S: np.ndarray) -> np.ndarray:
     return - 0.5 * (nis + np.log(2.0 * np.pi * np.linalg.det(S)))
 
 
-def _pdaf_update(x_hat: np.ndarray, P_hat: np.ndarray, z: np.ndarray, R: np.ndarray, clutter_rate: float, p_d: float, gate_size) -> tuple:
+def _pdaf_update(x_hat: np.ndarray, P_hat: np.ndarray, z: np.ndarray, R: np.ndarray, clutter_rate: float, p_d: float, gate_size) -> Tuple[np.ndarray, np.ndarray, int]:
 
     # Prepare constants
     logClutter = np.log(clutter_rate)
@@ -111,7 +112,7 @@ def _pdaf_update(x_hat: np.ndarray, P_hat: np.ndarray, z: np.ndarray, R: np.ndar
     beta = np.exp(ll)
     beta /= np.sum(beta)
     vk = np.sum(beta[1:].reshape((1, -1)) * vs, axis=1).reshape((2, 1))
-    W = P_hat @ np.linalg.inv(S)
+    W = np.linalg.solve(S.T, P_hat.T).T
 
     # P with moment matching
     v = vs.T.reshape((-1, 2, 1))  # (N x 2 x 1)
@@ -126,15 +127,96 @@ def _pdaf_update(x_hat: np.ndarray, P_hat: np.ndarray, z: np.ndarray, R: np.ndar
     assert P.shape == (2, 2)
     return x.flatten(), P, g_msk.sum()
 
+
 @dataclass
 class Params:
-        lengthscales: np.ndarray
-        sigmas: np.ndarray
-        noise: float
-        R: np.ndarray
-        clutter_rate: float
-        p_d: float
-        gate_size: float
+    """ Parameters used by DynGP """
+
+    # GP parameters
+    lengthscales: np.ndarray
+    sigmas: np.ndarray
+    noise: float
+
+    # PDAF parameters
+    R: np.ndarray
+    clutter_rate: float
+    p_d: float
+    gate_size: float
+
+
+def get_default_mle_params(train_x: np.ndarray, train_y: np.ndarray, return_score: bool = False, test_x: np.ndarray = None, test_y: np.ndarray = None, **kwargs) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+    """ Finds best MLE hyperparameters for GP and otherwise use defaults
+
+    This will internally use scikit-learn's GaussianProcessRegressor implementation to perform MLE. 
+
+
+
+    Params:
+    ----------------
+    train_x (np.ndarray): Training inputs with shape (N x 2).
+
+    train_y (np.ndarray): Training outputs with shape (N x 2).
+
+    return_score (bool): If true, the R^2 score of the training inputs is also returned. 
+
+    test_x (np.ndarray): Test inputs for R^2 scoring, ignored if return_score is false.
+
+    test_y (np.ndarray): Test outputs for R^2 scoring, ignored if return_score is false.
+
+    **kwargs: Additional named parameters to pass to sklearn.GaussianProcessRegressor's constructor
+
+
+    Returns:
+    ------------------
+    (params) if return_score is False.
+
+    (params, train_r_squared) if return_score is True and either test_x or test_y is None.
+
+    (params, train_r_squared, test_r_squared) if return_score is True and both test_x and test_y is not None.
+
+    Additional notes: 
+    - It might complain about too low noise parameters after optimizing, but this can safely be ignored as the noise component is not always neccessary.
+    - It depends scikit-learn's implementation of the kernels are identical to the the implementation in DynGP. 
+
+
+    """
+    kernel = kernels.ConstantKernel() * kernels.RBF(length_scale=2000) \
+        + kernels.ConstantKernel() * kernels.RBF() \
+        + kernels.WhiteKernel()
+
+    if "n_restarts_optimizer" not in kwargs:
+        kwargs["n_restarts_optimizer"] = 10
+
+    gpr = GaussianProcessRegressor(
+        kernel, normalize_y=True, copy_X_train=False, **kwargs)
+    gpr.fit(train_x, train_y)
+
+    p = gpr.kernel_.get_params()
+
+    params = Params(
+        lengthscales=np.array([
+            p["k1__k1__k2"].length_scale,
+            p["k1__k2__k2"].length_scale
+        ]),
+        sigmas=np.array([
+            p["k1__k1__k1"].constant_value,
+            p["k1__k2__k1"].constant_value
+        ]),
+        noise=p["k2"].noise_level,
+        clutter_rate=1e-4,
+        R=1000**2 * np.eye(2),
+        gate_size=2,
+        p_d=0.80,
+    )
+
+    if return_score:
+        train_r_squared = (gpr.score(train_x, train_y),)
+        if test_x is not None and test_y is not None:
+            test_r_squared = (gpr.score(test_x, test_y),)
+            return params, train_r_squared, test_r_squared
+        return params, train_r_squared
+    return params
+
 
 class DynGP():
     def __init__(self, train_x: np.ndarray, train_delta_y: np.ndarray, params: Params, normalize_y: bool = False):
@@ -149,8 +231,6 @@ class DynGP():
         self._train_x = train_x
         self._train_delta_y = train_delta_y
 
-
-
         # Precompute L and alpha for later use
         k = kernel(
             X1=train_x,
@@ -161,16 +241,18 @@ class DynGP():
 
         self._y_mean: np.ndarray = train_delta_y.mean(
             axis=0) if normalize_y else np.zeros(2)
-        self._y_var: np.ndarray = train_delta_y.var(axis=0) if normalize_y else np.ones(2)
+        self._y_var: np.ndarray = train_delta_y.var(
+            axis=0) if normalize_y else np.ones(2)
         self._y_std: np.ndarray = np.sqrt(self._y_var)
 
-        self.L = np.linalg.cholesky(k + (self.params.noise) * np.eye(k.shape[0]))
+        self.L = np.linalg.cholesky(
+            k + (self.params.noise) * np.eye(k.shape[0]))
         self.alpha = solve_triangular(
             self.L, (train_delta_y - self._y_mean) / self._y_std, lower=True)
         self.alpha = solve_triangular(
             self.L, self.alpha, lower=True, trans="T", overwrite_b=True)
 
-    def _predict(self, pred_x: np.ndarray, return_as_unit: bool = False) -> tuple:
+    def _predict(self, pred_x: np.ndarray, return_as_unit: bool = False) -> Tuple[np.ndarray, np.ndarray]:
         """ Evaluates the function f, conditioned on training samples in ctx """
         pred_x = pred_x.reshape((-1, 2))
         k = kernel(
@@ -180,7 +262,8 @@ class DynGP():
             lengthscales=self.params.lengthscales
         )
         mean = (k.T @ self.alpha)
-        v = solve_triangular(self.L, k, overwrite_b=True, lower=True)
+        v = solve_triangular(self.L, k, overwrite_b=True,
+                             lower=True, check_finite=False)
         var = kernel(
             X1=pred_x,
             X2=pred_x,
@@ -190,71 +273,70 @@ class DynGP():
         if return_as_unit:
             return mean, var
         return mean * self._y_std + self._y_mean, var * self._y_var.reshape((2, 1, 1))
-    
-    def _sample(self, pred_x: np.ndarray) -> np.ndarray:
-        mean, var = self._predict(pred_x, return_as_unit=True) # mean = (N, 2), var = (N, N)
-        A = np.linalg.cholesky(var) # (N, N)
-        Z = np.random.normal(size=(pred_x.shape[0], 2)) #(N x 2) standard normal samples
-        X = mean + A @ Z
-        return X * self._y_std + self._y_mean
 
+    def _sample(self, pred_x: np.ndarray) -> np.ndarray:
+        # mean = (N, 2), var = (N, N)
+        mean, var = self._predict(pred_x, return_as_unit=True)
+        A = np.linalg.cholesky(var + np.eye(var.shape[0]) * 1e-6)  # (N, N)
+        X = mean + A @ np.random.normal(size=(pred_x.shape[0], 2))
+        return X * self._y_std + self._y_mean
 
     def _predict_F(self, pred_x: np.ndarray) -> np.ndarray:
         pred_x = pred_x.reshape((1, 2))
-        dk = dkernel(pred_x, self._train_x, self.params.sigmas, self.params.lengthscales)
+        dk = dkernel(pred_x, self._train_x, self.params.sigmas,
+                     self.params.lengthscales)
         return (dk.T @ self.alpha) * self._y_std
 
-    def kalman(self, init_x: np.ndarray, end_time: float, dt: float = 1.0, pdaf_update: bool = True, return_gated: bool = False) -> np.ndarray:
-        assert init_x.shape[-1] == 2
+    def kalman(self, init_x: np.ndarray, end_time: float, dt: float = 1.0, pdaf_update: bool = True, return_gated: bool = False) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         steps = int(np.ceil(end_time / dt))+1
-        if init_x.ndim == 1:
-            print("Reshaping input")
-            init_x = init_x.reshape((1, 2))
-        traj_shape = tuple(init_x.shape[:-1])
-
-        x = np.empty(traj_shape + (steps, init_x.shape[-1]))
-        gated_measurements = np.empty(traj_shape + (steps,))
-        P = np.empty(traj_shape + (steps, 2, 2))
-        P[:, 0] = np.eye(2)*100*100
-        x[:, 0] = init_x
+        init_x = init_x.reshape((2,))
+        x = np.empty((steps, init_x.shape[-1]))
+        gated_measurements = np.empty((steps,))
+        P = np.empty((steps, 2, 2))
+        P[0] = np.eye(2)*100**2
+        x[0] = init_x
         identity = np.eye(2)
         dt_squared_eye = identity * dt ** 2
-        for traj in np.ndindex(traj_shape):
-            for i in range(1, steps):
-                # Predict
-                f, v = self._predict(
-                    pred_x=x[traj + (i-1,)],
+        for i in range(1, steps):
+            # Predict
+            f, v = self._predict(
+                pred_x=x[i-1],
+            )
+            x[i] = x[i-1] + f * dt  # g(x_{t-1})
+            G = identity + self._predict_F(
+                pred_x=x[i-1],
+            ) * dt
+            P[i] = (G.T @ P[i-1]
+                    @ G) + v.squeeze() * dt_squared_eye
+            # Update
+            if pdaf_update:
+                x[i], P[i], gated_measurements[i] = _pdaf_update(
+                    x_hat=x[i],
+                    P_hat=P[i],
+                    z=self._train_x,
+                    R=self.params.R,
+                    p_d=self.params.p_d,
+                    clutter_rate=self.params.clutter_rate,
+                    gate_size=self.params.gate_size
                 )
-                x[traj + (i,)] = x[traj + (i-1,)] + f * dt  # g(x_{t-1})
-                G = identity + self._predict_F(
-                    pred_x=x[traj + (i-1,)],
-                ) * dt
-                P[traj + (i,)] = (G.T @ P[traj + (i-1,)]
-                                  @ G) + v.squeeze() * dt_squared_eye
-                # Update
-                if pdaf_update:
-                    x[traj + (i,)], P[traj + (i,)], gated_measurements[traj + (i,)] = _pdaf_update(x[traj + (i,)], P[traj + (i,)], self._train_x,
-                                                                                                   self.params.R, p_d=self.params.p_d, clutter_rate=self.params.clutter_rate, gate_size=self.params.gate_size)
         ret = (x, P)
         if return_gated:
             ret += (gated_measurements,)
         return ret
-    
-    def particle(self, init_x: np.ndarray, end_time: float, dt: float = 1.0, N_particles: int =100) -> np.ndarray:
+
+    def particle(self, init_x: np.ndarray, end_time: float, dt: float = 1.0, N_particles: int = 100) -> np.ndarray:
         if init_x.ndim > 1:
             print("Flattening input")
             init_x = init_x.reshape((2,))
         assert init_x.shape == (2,), "Only support for one starting point atm"
-        steps = int(np.ceil(end_time / dt))+1 # Adding one to include init_x
+        steps = int(np.ceil(end_time / dt))+1  # Adding one to include init_x
 
         X = np.empty((steps, N_particles, 2))
-        X[0] = init_x.reshape((1, 2)) + np.random.normal(scale=10, size=(N_particles, 2))
+        X[0] = init_x.reshape((1, 2))
 
         for i in range(1, steps):
             X[i] = X[i-1] + self._sample(X[i-1]) * dt
         return X
-
-
 
     def plot_uncertianty_grid(self, xlim=(-1, 1), ylim=(-1, 1), size=(20, 20)):
         """ Plots the underlying uncertianty as a background color
@@ -291,19 +373,4 @@ class DynGP():
 
 
 if __name__ == "__main__":
-    import timeit
-    import sys
-
-    theta, r = np.mgrid[-np.pi:np.pi:0.1, 0:1:0.1]
-    X = np.cos(theta)*r
-    Y = np.sin(theta)*r
-    X = np.vstack([X.T.ravel(), Y.T.ravel()]).T
-    msk = np.linalg.norm(X, axis=1) > 0.1
-    X = X[msk]
-    DY = X[1:] - X[:-1]
-    DY /= np.linalg.norm(DY, axis=1).reshape((-1, 1))
-    # print(DY)
-    X = X[:-1]
-    msk = np.random.choice(X.shape[0], 20)
-    X = X[msk, :]
-    DY = DY[msk, :]
+    pass

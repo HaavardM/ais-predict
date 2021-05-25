@@ -7,5 +7,4 @@ google-cloud-bigquery-storage
 pyarrow
 contextily
 sklearn
-numba
 seaborn
