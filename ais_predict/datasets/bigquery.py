@@ -31,11 +31,15 @@ def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None,
     mmsi = "'" + "','".join(mmsi) + "'" if mmsi is not None else None
     mmsi = f"AND CAST(mmsi AS STRING) IN ({mmsi})" if mmsi is not None else ""
 
+    leads = [f"LEAD(sample, {l}) OVER w AS sample_{l}" for l in range(lead)]
+    query = f"""
+        WITH with_lead AS (
+            SELECT mmsi, {", ".join(leads)} FROM `master-thesis-305112.ais.samples` WINDOW w AS (PARTITION BY mmsi ORDER BY sample.timestamp) 
+        ) 
+    """
+    samples = ", ".join([f"sample_{l}.*" for l in range(lead)])
     # Select samples
-    query = f"SELECT mmsi"
-    for l in range(lead):
-        query += f", sample_{l}.* "
-    query += f"FROM `master-thesis-305112.ais.samples_with_lead`"
+    query += f"SELECT mmsi, {samples} FROM with_lead "
 
     # Filter out bad samples
     query += "WHERE TRUE"
@@ -43,12 +47,15 @@ def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None,
         query += f" AND sample_{l}.timestamp IS NOT NULL "
         query += f" AND sample_{l}.sog >= {min_knots} " if min_knots is not None else ""
         if l > 0:
-            query += f"AND TIMESTAMP_DIFF(sample_{l}.timestamp, sample_{l-1}.timestamp, MINUTE) < 30"
-    
+            query += f"AND TIMESTAMP_DIFF(sample_{l}.timestamp, sample_{l-1}.timestamp, MINUTE) < 15 "
+
     # Additional filters
     query += f"""
                 {within}
                 {mmsi}
+            """
+    query += "WINDOW w AS (PARTITION BY mmsi ORDER BY sample.timestamp) "
+    query += f"""
                 ORDER BY mmsi, sample_0.timestamp
                 {limit}
              """
