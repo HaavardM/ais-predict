@@ -11,7 +11,7 @@ from sklearn.gaussian_process import kernels
 from typing import Optional, Tuple
 
 
-def samples_from_lag_n_df(df: gpd.GeoDataFrame, n: int, flatten: bool = True):
+def samples_from_lag_n_df(df: gpd.GeoDataFrame, n: int, flatten: bool = True, use_cog: bool = False):
     X = np.empty((len(df.index), n, 3))
     Y = np.empty((len(df.index), n, 2))
     dt = np.empty((len(df.index), n))
@@ -32,8 +32,16 @@ def samples_from_lag_n_df(df: gpd.GeoDataFrame, n: int, flatten: bool = True):
         X[:, i, -1] = (df["timestamp" + l1] -
                    df["timestamp"]).dt.seconds.to_numpy()
         msk = dt[:, i] > 1
-        Y[msk, i, :] = np.vstack(
-            [p2_x - p1_x, p2_y - p1_y]).T[msk] / dt[msk, i].reshape((-1, 1))
+        if use_cog:
+            rad = df["cog" + l1] * np.pi / 180 #+ np.pi / 2.0
+            sog = df["sog" + l1] #* 0.514444444
+            Y[msk, i, :] = np.vstack([
+                np.sin(rad),
+                np.cos(rad)
+            ]).T[msk] * sog.to_numpy()[msk][..., np.newaxis]
+        else:
+            Y[msk, i, :] = np.vstack(
+                [p2_x - p1_x, p2_y - p1_y]).T[msk] / dt[msk, i].reshape((-1, 1))
     msk = dt > 1
     X = X[msk]
     Y = Y[msk]
