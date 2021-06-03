@@ -58,17 +58,9 @@ class PosGP():
             X = X[ix, :]
             Y = Y[ix, :]
 
-        self.kernel_x = kernels.RBF(
-            variance=10.0,
-            lengthscales=[1000.0, 1000.0, 10.0, 10.0, 60.0]
-        ) + kernels.RationalQuadratic(
-            variance=1.0,
-            lengthscales=[1.0]*5
-        ) + kernels.White()
-
         self.kernel = kernels.SharedIndependent(
-            kernels.RBF(variance=100, lengthscales=[100.0, 100.0, 1.0, 1.0, 60.0])
-            + kernels.RBF(lengthscales=[1.0, 1.0, 1.0, 1.0, 1.0])
+            kernels.RBF(variance=1000.0, lengthscales=[2000.0, 2000.0, 50.0, 50.0, 60.0])
+            + kernels.RationalQuadratic(lengthscales=[1.0, 1.0, 1.0, 1.0, 1.0])
             + kernels.White(1),
             output_dim=2
         )

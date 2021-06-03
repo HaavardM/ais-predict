@@ -62,10 +62,10 @@ def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None,
     df = bq.query(query).result().to_dataframe(bqstorage_client=bqstorage)
 
     # Convert timestamps and positions to correct dtypes
-    df.position = gpd.GeoSeries.from_wkt(df.position, crs="wgs84")
+    df.position = gpd.GeoSeries.from_wkt(df.position, crs="wgs84").to_crs(3857)
     df.timestamp = pd.to_datetime(df.timestamp)
     for l in range(1, lead):
-        df[f"position_{l}"] = gpd.GeoSeries.from_wkt(df[f"position_{l}"], crs="wgs84")
+        df[f"position_{l}"] = gpd.GeoSeries.from_wkt(df[f"position_{l}"], crs="wgs84").to_crs(3857)
         df[f"timestamp_{l}"] = pd.to_datetime(df[f"timestamp_{l}"])
     df = gpd.GeoDataFrame(df, geometry="position")
     return df
