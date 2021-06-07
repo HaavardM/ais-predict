@@ -31,7 +31,7 @@ def samples_from_lag_n_df(df: gpd.GeoDataFrame, n: int, flatten: bool = True, us
         X[:, i, :2] = np.vstack([p1_x, p1_y]).T
         X[:, i, -1] = (df["timestamp" + l1] -
                    df["timestamp"]).dt.seconds.to_numpy()
-        msk = dt[:, i] > 1
+        msk = dt[:, i] > 30
         if use_cog:
             rad = df["cog" + l1] * np.pi / 180 #+ np.pi / 2.0
             sog = df["sog" + l1] #* 0.514444444
@@ -42,7 +42,7 @@ def samples_from_lag_n_df(df: gpd.GeoDataFrame, n: int, flatten: bool = True, us
         else:
             Y[msk, i, :] = np.vstack(
                 [p2_x - p1_x, p2_y - p1_y]).T[msk] / dt[msk, i].reshape((-1, 1))
-    msk = dt > 1
+    msk = dt > 30
     X = X[msk]
     Y = Y[msk]
     if flatten:
@@ -195,8 +195,8 @@ def get_default_mle_params(train_x: np.ndarray, train_y: np.ndarray, return_scor
 
 
     """
-    kernel = kernels.ConstantKernel() * kernels.RBF(length_scale=[4000.0, 4000.0, 1.0e5]) \
-        + kernels.ConstantKernel() * kernels.RBF(length_scale=[1.0, 1.0, 1.0e5]) \
+    kernel = kernels.ConstantKernel() * kernels.RBF(length_scale=[4000.0, 4000.0, 1.0e5], length_scale_bounds=(0.00001, 1e10)) \
+        + kernels.ConstantKernel() * kernels.RBF(length_scale=[1.0, 1.0, 1.0]) \
         + kernels.WhiteKernel()
 
     if "n_restarts_optimizer" not in kwargs:
@@ -234,7 +234,7 @@ def get_default_mle_params(train_x: np.ndarray, train_y: np.ndarray, return_scor
 
 
 class DynGP():
-    def __init__(self, train_x: np.ndarray, train_y: np.ndarray, params: Params, normalize_y: bool = False):
+    def __init__(self, train_x: np.ndarray, train_y: np.ndarray, params: Params, normalize_y: bool = True):
         assert train_x.ndim == 2
         assert train_x.shape[-1] == 3
         assert train_y.ndim == 2
@@ -292,9 +292,10 @@ class DynGP():
     def _sample(self, pred_x: np.ndarray) -> np.ndarray:
         # mean = (N, 2), var = (N, N)
         mean, var = self.f(pred_x, return_as_unit=True)
+        v = np.diagonal(var)
         A = np.linalg.cholesky(var + np.eye(var.shape[0]) * 1e-6)  # (N, N)
         X = mean + A @ np.random.normal(size=(pred_x.shape[0], 2))
-        return X * self._y_std + self._y_mean
+        return X * self._y_std + self._y_mean, v
 
     def _predict_F(self, pred_x: np.ndarray) -> np.ndarray:
         pred_x = pred_x.reshape((1, 3))
@@ -340,7 +341,7 @@ class DynGP():
             ret += (gated_measurements,)
         return ret
 
-    def particle(self, init_x: np.ndarray, end_time: float, dt: float = 1.0, N_particles: int = 100) -> np.ndarray:
+    def particle(self, init_x: np.ndarray, end_time: float, dt: float = 1.0, N_particles: int = 100, cutoff: float = 100) -> np.ndarray:
         if init_x.ndim > 1:
             print("Flattening input")
             init_x = init_x.reshape((2,))
@@ -350,10 +351,14 @@ class DynGP():
         X = np.zeros((steps, N_particles, 3))
         X[0, :, :2] = init_x.reshape((1, 2)) + np.random.normal(loc=0, scale=100, size=(N_particles, 2))
         X[:, :, -1] = (np.arange(steps) * dt)[...,np.newaxis]
+        w = np.zeros((steps, N_particles))
 
         for i in range(1, steps):
-            X[i, :, :2] = X[i-1, :, :2] + self._sample(X[i-1]) * dt
-        return X
+            p, v = self._sample(X[i-1])
+            X[i, :, :2] = X[i-1, :, :2] + p * dt
+            w[i-1] = v
+        _, w[-1] = self._sample(X[-1])
+        return X, w
 
 
 if __name__ == "__main__":

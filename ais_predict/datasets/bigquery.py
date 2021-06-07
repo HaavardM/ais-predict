@@ -5,7 +5,7 @@ import google.auth
 from shapely.geometry.polygon import Polygon
 import shapely.wkt
 
-def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None, min_knots: int = None, project_id: str="master-thesis-305112" ,credentials=None) -> gpd.GeoDataFrame:
+def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None, min_knots: int = None, project_id: str="master-thesis-305112" ,credentials=None, shuffle: bool=False, crs="epsg:3857") -> gpd.GeoDataFrame:
     """Creates a query job in Bigquery and downloades the result into a GeoPandas Dataframe
     
 
@@ -26,10 +26,7 @@ def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None,
     bq = bigquery.Client(credentials=credentials, project=project_id,)
     bqstorage = bigquery_storage.BigQueryReadClient(credentials=credentials)
     lead += 1
-    limit = "LIMIT " + str(limit) if limit is not None else ""
-    within = f"AND ST_WITHIN(sample_0.position, ST_GEOGFROMTEXT('{str(within)}'))" if within is not None else ""
-    mmsi = "'" + "','".join(mmsi) + "'" if mmsi is not None else None
-    mmsi = f"AND CAST(mmsi AS STRING) IN ({mmsi})" if mmsi is not None else ""
+    
 
     leads = [f"LEAD(sample, {l}) OVER w AS sample_{l}" for l in range(lead)]
     query = f"""
@@ -45,27 +42,33 @@ def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None,
     query += "WHERE TRUE"
     for l in range(lead):
         query += f" AND sample_{l}.timestamp IS NOT NULL "
-        query += f" AND sample_{l}.sog >= {min_knots} " if min_knots is not None else ""
+        if min_knots is not None: query += f" AND sample_{l}.sog >= {min_knots} " 
         if l > 0:
             query += f"AND TIMESTAMP_DIFF(sample_{l}.timestamp, sample_{l-1}.timestamp, MINUTE) < 15 "
+
+    within = f"AND ST_WITHIN(sample_0.position, ST_GEOGFROMTEXT('{str(within)}'))" if within is not None else ""
+    mmsi = "'" + "','".join(mmsi) + "'" if mmsi is not None else None
+    mmsi = f"AND CAST(mmsi AS STRING) IN ({mmsi})" if mmsi is not None else ""
 
     # Additional filters
     query += f"""
                 {within}
                 {mmsi}
             """
+    # Window
     query += "WINDOW w AS (PARTITION BY mmsi ORDER BY sample.timestamp) "
-    query += f"""
-                ORDER BY mmsi, sample_0.timestamp
-                {limit}
-             """
+    if shuffle:
+        query += "ORDER BY RAND()"
+    else:
+        query += "ORDER BY mmsi, sample_0.timestamp"
+    if limit is not None: query += "LIMIT " + str(limit)
     df = bq.query(query).result().to_dataframe(bqstorage_client=bqstorage)
 
     # Convert timestamps and positions to correct dtypes
-    df.position = gpd.GeoSeries.from_wkt(df.position, crs="wgs84").to_crs(3857)
+    df.position = gpd.GeoSeries.from_wkt(df.position, crs="wgs84").to_crs(crs)
     df.timestamp = pd.to_datetime(df.timestamp)
     for l in range(1, lead):
-        df[f"position_{l}"] = gpd.GeoSeries.from_wkt(df[f"position_{l}"], crs="wgs84").to_crs(3857)
+        df[f"position_{l}"] = gpd.GeoSeries.from_wkt(df[f"position_{l}"], crs="wgs84").to_crs(crs)
         df[f"timestamp_{l}"] = pd.to_datetime(df[f"timestamp_{l}"])
     df = gpd.GeoDataFrame(df, geometry="position")
     return df
