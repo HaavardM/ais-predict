@@ -77,9 +77,14 @@ def confidence_ellipse(x, y, P, ax, std=2, facecolor='none', **kwargs):
 def limits(*args):
     args = [a.reshape((-1, 2)) for a in args]
     temp = np.concatenate(args)
-    min = np.min(temp, axis=0)
-    max = np.max(temp, axis=0)
-    return tuple(zip(min, max))
+    mi = np.min(temp, axis=0)
+    ma = np.max(temp, axis=0)
+
+    dist = max(ma-mi)
+    dist = abs(((ma - mi) - dist) / 2)
+
+
+    return tuple(zip(mi-dist, ma+dist))
 
 def set_size(width, fraction=1):
     """Set figure dimensions to avoid scaling in LaTeX.

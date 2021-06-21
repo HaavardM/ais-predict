@@ -5,7 +5,7 @@ import google.auth
 from shapely.geometry.polygon import Polygon
 import shapely.wkt
 
-def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None, min_knots: int = None, project_id: str="master-thesis-305112" ,credentials=None, shuffle: bool=False, crs="epsg:3857") -> gpd.GeoDataFrame:
+def download(limit: int = 1000, lead=0, within: Polygon=None, min_samples: int = 4, mmsi: list = None, min_knots: int = None, project_id: str="master-thesis-305112" ,credentials=None, shuffle: bool=False, crs="epsg:3857") -> gpd.GeoDataFrame:
     """Creates a query job in Bigquery and downloades the result into a GeoPandas Dataframe
     
 
@@ -43,7 +43,7 @@ def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None,
     for l in range(lead):
         query += f" AND sample_{l}.timestamp IS NOT NULL "
         if min_knots is not None: query += f" AND sample_{l}.sog >= {min_knots} " 
-        if l > 0:
+        if 0 < l < min_samples:
             query += f"AND TIMESTAMP_DIFF(sample_{l}.timestamp, sample_{l-1}.timestamp, MINUTE) < 15 "
 
     within = f"AND ST_WITHIN(sample_0.position, ST_GEOGFROMTEXT('{str(within)}'))" if within is not None else ""
@@ -60,7 +60,7 @@ def download(limit: int = 1000, lead=0, within: Polygon=None, mmsi: list = None,
     if shuffle:
         query += "ORDER BY RAND()"
     else:
-        query += "ORDER BY mmsi, sample_0.timestamp"
+        query += "ORDER BY mmsi, sample_0.timestamp "
     if limit is not None: query += "LIMIT " + str(limit)
     df = bq.query(query).result().to_dataframe(bqstorage_client=bqstorage)
 
