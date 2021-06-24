@@ -247,7 +247,7 @@ def get_default_mle_params(train_x: np.ndarray, train_y: np.ndarray, return_scor
 
 
     """
-    kernel = kernels.ConstantKernel(1.0) * kernels.RBF(length_scale=[4000.0, 4000.0, 1000.0], length_scale_bounds=(500, 10000)) \
+    kernel = kernels.ConstantKernel(1.0) * kernels.RBF(length_scale=[4000.0, 4000.0, 1000.0], length_scale_bounds=(10, 1000)) \
         + kernels.WhiteKernel(noise_level_bounds=(0.0001, 10))
 
     if "n_restarts_optimizer" not in kwargs:
@@ -377,6 +377,7 @@ class DynGP():
             G = identity + self._predict_F(
                 pred_x=x[i-1],
             ) * dt
+
 
             #print(1, G, self.num_jac(x[i-1], epsilon=1e-6), sep="\n")
 
