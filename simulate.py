@@ -48,7 +48,7 @@ plt.rcParams.update(tex_fonts)
 
 
 ##### SIM CONFIG ####
-sim_name = "straight_line"
+sim_name = "curved_line"
 use_pdaf=True
 train_max_cog_dist = 10.0
 train_max_sog_dist = 5.0
@@ -80,7 +80,7 @@ d = df.loc[msk]
 
 cog_cols = df.columns[df.columns.str.contains("cog")]
 cog_dist = (df[cog_cols].diff(axis=1) + 180) % 360 - 180
-d = d.loc[cog_dist.abs().sum(axis=1) < 30].copy()
+d = d.loc[cog_dist.abs().sum(axis=1) > 40].copy()
 
 grouping = d.groupby(["mmsi", "date"])
 groups = list(grouping.groups.keys())
@@ -173,18 +173,18 @@ def run(i):
         params = dyngp.get_default_mle_params(train_x, train_y, n_restarts_optimizer=10)
         dgp = dyngp.DynGP(train_x, train_y, params, normalize_y=True)
         dyngp_x_pdaf, dyngp_P_pdaf = res_pdaf = dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=True, synthetic_update=False, P_0=P_0, update_P=True)
-        dyngp_x_pdaf_no_P, dyngp_P_pdaf_no_P = res_pdaf_no_P = dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=True, synthetic_update=False, P_0=P_0, update_P=False)
+        #dyngp_x_pdaf_no_P, dyngp_P_pdaf_no_P = res_pdaf_no_P = dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=True, synthetic_update=False, P_0=P_0, update_P=False)
         dyngp_x_syn, dyngp_P_syn = res_syn = dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=False, synthetic_update=True, P_0=P_0, update_P=True)
-        dyngp_x_syn_no_P, dyngp_P_syn_no_P = res_syn_no_P = dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=False, synthetic_update=True, P_0=P_0, update_P=False)
+        #dyngp_x_syn_no_P, dyngp_P_syn_no_P = res_syn_no_P = dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=False, synthetic_update=True, P_0=P_0, update_P=False)
         dyngp_x_no_pdaf, dyngp_P_no_pdaf = res = dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=False, synthetic_update=False, P_0=P_0, update_P=True)
         pred_x_cvm = constant_velocity_model(dyngp_test_x[0, :2], dyngp_x_pdaf[:, -1], test.cog.to_numpy(), test.sog.to_numpy())
 
         cog_params = dyngp.get_default_mle_params(cog_train_x, cog_train_y, n_restarts_optimizer=10)
         cog_dgp = dyngp.DynGP(cog_train_x, cog_train_y, cog_params, normalize_y=True)
         cog_dyngp_x_pdaf, cog_dyngp_P_pdaf = cog_res_pdaf = cog_dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=True, synthetic_update=False, P_0=P_0, update_P=True)
-        cog_dyngp_x_pdaf_no_P, cog_dyngp_P_pdaf_no_P = cog_res_pdaf_no_P = cog_dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=True, synthetic_update=False, P_0=P_0, update_P=False)
+        #cog_dyngp_x_pdaf_no_P, cog_dyngp_P_pdaf_no_P = cog_res_pdaf_no_P = cog_dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=True, synthetic_update=False, P_0=P_0, update_P=False)
         cog_dyngp_x_syn, cog_dyngp_P_syn = cog_res_syn = cog_dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=False, synthetic_update=True, P_0=P_0, update_P=True)
-        cog_dyngp_x_syn_no_P, cog_dyngp_P_syn_no_P = cog_res_syn_no_P = cog_dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=False, synthetic_update=True, P_0=P_0, update_P=False)
+        #cog_dyngp_x_syn_no_P, cog_dyngp_P_syn_no_P = cog_res_syn_no_P = cog_dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=False, synthetic_update=True, P_0=P_0, update_P=False)
         cog_dyngp_x_no_pdaf, cog_dyngp_P_no_pdaf = cog_res = cog_dgp.kalman(dyngp_test_x[0, :2], dyngp_test_x[-1, -1], dt=10, pdaf_update=False, synthetic_update=False, P_0=P_0, update_P=True)
 
         pgp = posgp.PosGP(posgp_train_x, posgp_train_y)
@@ -203,9 +203,9 @@ def run(i):
         dyngp_nees_pdaf = metrics.nees(dyngp_x_pdaf, dyngp_P_pdaf, dyngp_test_x)
 
         # DynGP with PDAF
-        dyngp_traj_subset_pdaf_no_P, dyngp_traj_err_pdaf_no_P = metrics.compare_trajectories(dyngp_x_pdaf_no_P, dyngp_test_x)
-        dyngp_path_err_pdaf_no_P = metrics.path_error(dyngp_x_pdaf_no_P, dyngp_test_x)
-        dyngp_nees_pdaf_no_P = metrics.nees(dyngp_x_pdaf_no_P, dyngp_P_pdaf_no_P, dyngp_test_x)
+        #dyngp_traj_subset_pdaf_no_P, dyngp_traj_err_pdaf_no_P = metrics.compare_trajectories(dyngp_x_pdaf_no_P, dyngp_test_x)
+        #dyngp_path_err_pdaf_no_P = metrics.path_error(dyngp_x_pdaf_no_P, dyngp_test_x)
+        #dyngp_nees_pdaf_no_P = metrics.nees(dyngp_x_pdaf_no_P, dyngp_P_pdaf_no_P, dyngp_test_x)
 
 
         # DynGP with syn
@@ -214,14 +214,14 @@ def run(i):
         dyngp_nees_syn = metrics.nees(dyngp_x_syn, dyngp_P_syn, dyngp_test_x)
 
         # DynGP with syn - no P
-        dyngp_traj_subset_syn_no_P, dyngp_traj_err_syn_no_P = metrics.compare_trajectories(dyngp_x_syn_no_P, dyngp_test_x)
-        dyngp_path_err_syn_no_P = metrics.path_error(dyngp_x_syn_no_P, dyngp_test_x)
-        dyngp_nees_syn_no_P = metrics.nees(dyngp_x_syn_no_P, dyngp_P_syn_no_P, dyngp_test_x)
+        #dyngp_traj_subset_syn_no_P, dyngp_traj_err_syn_no_P = metrics.compare_trajectories(dyngp_x_syn_no_P, dyngp_test_x)
+        #dyngp_path_err_syn_no_P = metrics.path_error(dyngp_x_syn_no_P, dyngp_test_x)
+        #dyngp_nees_syn_no_P = metrics.nees(dyngp_x_syn_no_P, dyngp_P_syn_no_P, dyngp_test_x)
 
         # DynGP with PDAF
-        cog_dyngp_traj_subset_pdaf_no_P, cog_dyngp_traj_err_pdaf_no_P = metrics.compare_trajectories(cog_dyngp_x_pdaf_no_P, dyngp_test_x)
-        cog_dyngp_path_err_pdaf_no_P = metrics.path_error(cog_dyngp_x_pdaf_no_P, dyngp_test_x)
-        cog_dyngp_nees_pdaf_no_P = metrics.nees(cog_dyngp_x_pdaf_no_P, cog_dyngp_P_pdaf_no_P, dyngp_test_x)
+        #cog_dyngp_traj_subset_pdaf_no_P, cog_dyngp_traj_err_pdaf_no_P = metrics.compare_trajectories(cog_dyngp_x_pdaf_no_P, dyngp_test_x)
+        #cog_dyngp_path_err_pdaf_no_P = metrics.path_error(cog_dyngp_x_pdaf_no_P, dyngp_test_x)
+        #cog_dyngp_nees_pdaf_no_P = metrics.nees(cog_dyngp_x_pdaf_no_P, cog_dyngp_P_pdaf_no_P, dyngp_test_x)
 
 
         # DynGP with syn
@@ -230,9 +230,9 @@ def run(i):
         cog_dyngp_nees_syn = metrics.nees(cog_dyngp_x_syn, cog_dyngp_P_syn, dyngp_test_x)
 
         # DynGP with syn - no P
-        cog_dyngp_traj_subset_syn_no_P, cog_dyngp_traj_err_syn_no_P = metrics.compare_trajectories(cog_dyngp_x_syn_no_P, dyngp_test_x)
-        cog_dyngp_path_err_syn_no_P = metrics.path_error(cog_dyngp_x_syn_no_P, dyngp_test_x)
-        cog_dyngp_nees_syn_no_P = metrics.nees(cog_dyngp_x_syn_no_P, cog_dyngp_P_syn_no_P, dyngp_test_x)
+        #cog_dyngp_traj_subset_syn_no_P, cog_dyngp_traj_err_syn_no_P = metrics.compare_trajectories(cog_dyngp_x_syn_no_P, dyngp_test_x)
+        #cog_dyngp_path_err_syn_no_P = metrics.path_error(cog_dyngp_x_syn_no_P, dyngp_test_x)
+        #cog_dyngp_nees_syn_no_P = metrics.nees(cog_dyngp_x_syn_no_P, cog_dyngp_P_syn_no_P, dyngp_test_x)
 
         # DynGP without PDAF
         dyngp_traj_subset_no_pdaf, dyngp_traj_err_no_pdaf = metrics.compare_trajectories(dyngp_x_no_pdaf, dyngp_test_x)
@@ -282,17 +282,17 @@ def run(i):
         dyngp_pdaf_df["y_source"] = "finite_difference"
         dyngp_pdaf_df["train_samples"] = train_x.shape[0]
 
-        dyngp_pdaf_no_P_df = pd.DataFrame({
-            "timestep": dyngp_test_x[:, -1],
-            "ground_truth": list(dyngp_test_x),
-            "prediction": list(dyngp_traj_subset_pdaf_no_P),
-            "trajectory_error": list(dyngp_traj_err_pdaf_no_P),
-            "path_error": list(dyngp_path_err_pdaf_no_P),
-            "nees": list(dyngp_nees_pdaf_no_P)
-        })
-        dyngp_pdaf_no_P_df["method"] = "dyngp_pdaf_no_P"
-        dyngp_pdaf_no_P_df["y_source"] = "finite_difference"
-        dyngp_pdaf_no_P_df["train_samples"] = train_x.shape[0]
+        #dyngp_pdaf_no_P_df = pd.DataFrame({
+        #    "timestep": dyngp_test_x[:, -1],
+        #    "ground_truth": list(dyngp_test_x),
+        #    "prediction": list(dyngp_traj_subset_pdaf_no_P),
+        #    "trajectory_error": list(dyngp_traj_err_pdaf_no_P),
+        #    "path_error": list(dyngp_path_err_pdaf_no_P),
+        #    "nees": list(dyngp_nees_pdaf_no_P)
+        #})
+        #dyngp_pdaf_no_P_df["method"] = "dyngp_pdaf_no_P"
+        #dyngp_pdaf_no_P_df["y_source"] = "finite_difference"
+        #dyngp_pdaf_no_P_df["train_samples"] = train_x.shape[0]
 
         dyngp_syn_df = pd.DataFrame({
             "timestep": dyngp_test_x[:, -1],
@@ -306,17 +306,17 @@ def run(i):
         dyngp_syn_df["y_source"] = "finite_difference"
         dyngp_syn_df["train_samples"] = train_x.shape[0]
 
-        dyngp_syn_no_P_df = pd.DataFrame({
-            "timestep": dyngp_test_x[:, -1],
-            "ground_truth": list(dyngp_test_x),
-            "prediction": list(dyngp_traj_subset_syn_no_P),
-            "trajectory_error": list(dyngp_traj_err_syn_no_P),
-            "path_error": list(dyngp_path_err_syn_no_P),
-            "nees": list(dyngp_nees_syn_no_P)
-        })
-        dyngp_syn_no_P_df["method"] = "dyngp_syn_no_P"
-        dyngp_syn_no_P_df["y_source"] = "finite_difference"
-        dyngp_syn_no_P_df["train_samples"] = train_x.shape[0]
+        #dyngp_syn_no_P_df = pd.DataFrame({
+        #    "timestep": dyngp_test_x[:, -1],
+        #    "ground_truth": list(dyngp_test_x),
+        #    "prediction": list(dyngp_traj_subset_syn_no_P),
+        #    "trajectory_error": list(dyngp_traj_err_syn_no_P),
+        #    "path_error": list(dyngp_path_err_syn_no_P),
+        #   "nees": list(dyngp_nees_syn_no_P)
+        #})
+        #dyngp_syn_no_P_df["method"] = "dyngp_syn_no_P"
+        #dyngp_syn_no_P_df["y_source"] = "finite_difference"
+        #dyngp_syn_no_P_df["train_samples"] = train_x.shape[0]
 
         dyngp_no_pdaf_df = pd.DataFrame({
             "timestep": dyngp_test_x[:, -1],
@@ -343,17 +343,17 @@ def run(i):
         cog_dyngp_pdaf_df["y_source"] = "cog"
         cog_dyngp_pdaf_df["train_samples"] = train_x.shape[0]
 
-        cog_dyngp_pdaf_no_P_df = pd.DataFrame({
-            "timestep": dyngp_test_x[:, -1],
-            "ground_truth": list(dyngp_test_x),
-            "prediction": list(cog_dyngp_traj_subset_pdaf_no_P),
-            "trajectory_error": list(cog_dyngp_traj_err_pdaf_no_P),
-            "path_error": list(cog_dyngp_path_err_pdaf_no_P),
-            "nees": list(cog_dyngp_nees_pdaf_no_P)
-        })
-        cog_dyngp_pdaf_no_P_df["method"] = "dyngp_pdaf_no_P"
-        cog_dyngp_pdaf_no_P_df["y_source"] = "cog"
-        cog_dyngp_pdaf_no_P_df["train_samples"] = train_x.shape[0]
+        #cog_dyngp_pdaf_no_P_df = pd.DataFrame({
+        #    "timestep": dyngp_test_x[:, -1],
+        #    "ground_truth": list(dyngp_test_x),
+        #    "prediction": list(cog_dyngp_traj_subset_pdaf_no_P),
+        #    "trajectory_error": list(cog_dyngp_traj_err_pdaf_no_P),
+        #    "path_error": list(cog_dyngp_path_err_pdaf_no_P),
+        #    "nees": list(cog_dyngp_nees_pdaf_no_P)
+        #})
+        #cog_dyngp_pdaf_no_P_df["method"] = "dyngp_pdaf_no_P"
+        #cog_dyngp_pdaf_no_P_df["y_source"] = "cog"
+        #cog_dyngp_pdaf_no_P_df["train_samples"] = train_x.shape[0]
 
         cog_dyngp_syn_df = pd.DataFrame({
             "timestep": dyngp_test_x[:, -1],
@@ -367,17 +367,17 @@ def run(i):
         cog_dyngp_syn_df["y_source"] = "cog"
         cog_dyngp_syn_df["train_samples"] = train_x.shape[0]
 
-        cog_dyngp_syn_no_P_df = pd.DataFrame({
-            "timestep": dyngp_test_x[:, -1],
-            "ground_truth": list(dyngp_test_x),
-            "prediction": list(cog_dyngp_traj_subset_syn_no_P),
-            "trajectory_error": list(cog_dyngp_traj_err_syn_no_P),
-            "path_error": list(cog_dyngp_path_err_syn_no_P),
-            "nees": list(cog_dyngp_nees_syn_no_P)
-        })
-        cog_dyngp_syn_no_P_df["method"] = "dyngp_syn_no_P"
-        cog_dyngp_syn_no_P_df["y_source"] = "cog"
-        cog_dyngp_syn_no_P_df["train_samples"] = train_x.shape[0]
+        #cog_dyngp_syn_no_P_df = pd.DataFrame({
+        #    "timestep": dyngp_test_x[:, -1],
+        #    "ground_truth": list(dyngp_test_x),
+        #    "prediction": list(cog_dyngp_traj_subset_syn_no_P),
+        #    "trajectory_error": list(cog_dyngp_traj_err_syn_no_P),
+        #    "path_error": list(cog_dyngp_path_err_syn_no_P),
+        #    "nees": list(cog_dyngp_nees_syn_no_P)
+        #})
+        #cog_dyngp_syn_no_P_df["method"] = "dyngp_syn_no_P"
+        #cog_dyngp_syn_no_P_df["y_source"] = "cog"
+        #cog_dyngp_syn_no_P_df["train_samples"] = train_x.shape[0]
 
         cog_dyngp_no_pdaf_df = pd.DataFrame({
             "timestep": dyngp_test_x[:, -1],
@@ -408,14 +408,14 @@ def run(i):
         temp_df = pd.concat([
             cvm_df,
             dyngp_pdaf_df,
-            dyngp_pdaf_no_P_df,
+            #dyngp_pdaf_no_P_df,
             dyngp_syn_df,
-            dyngp_syn_no_P_df,
+            #dyngp_syn_no_P_df,
             dyngp_no_pdaf_df,
             cog_dyngp_pdaf_df,
-            cog_dyngp_pdaf_no_P_df,
+            #cog_dyngp_pdaf_no_P_df,
             cog_dyngp_syn_df,
-            cog_dyngp_syn_no_P_df,
+            #cog_dyngp_syn_no_P_df,
             cog_dyngp_no_pdaf_df,
             pos_gp_df
         ])
@@ -423,94 +423,94 @@ def run(i):
 
         plt.close()
         dgp_plot.kalman_figure(dgp, res_pdaf, dyngp_test_x, label="GP", plot_P=True)
-        plt.savefig(f"{sim_name}/raw/run_{i}_pos_pdaf.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_pos_pdaf.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
 
         plt.clf()
         dgp_plot.kalman_state_figure(dgp, res_pdaf, dyngp_test_x, label="GP")
-        plt.savefig(f"{sim_name}/raw/run_{i}_state_pdaf.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_state_pdaf.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
 
-        plt.clf()
-        dgp_plot.kalman_figure(dgp, res_pdaf_no_P, dyngp_test_x, label="GP", plot_P=True)
-        plt.savefig(f"{sim_name}/raw/run_{i}_pos_pdaf_no_P.pdf", format="pdf", bbox_inches='tight')
-        plt.close()
-        plt.clf()
-        dgp_plot.kalman_state_figure(dgp, res_pdaf_no_P, dyngp_test_x, label="GP")
-        plt.savefig(f"{sim_name}/raw/run_{i}_state_pdaf_no_P.pdf", format="pdf", bbox_inches='tight')
-        plt.close()
+        #plt.clf()
+        #dgp_plot.kalman_figure(dgp, res_pdaf_no_P, dyngp_test_x, label="GP", plot_P=True)
+        #plt.savefig(f"{sim_name}/raw/run_{i}_pos_pdaf_no_P.pdf", format="pdf", bbox_inches='tight')
+        #plt.close()
+        #plt.clf()
+        #dgp_plot.kalman_state_figure(dgp, res_pdaf_no_P, dyngp_test_x, label="GP")
+        #plt.savefig(f"{sim_name}/raw/run_{i}_state_pdaf_no_P.pdf", format="pdf", bbox_inches='tight')
+        #plt.close()
 
         
         plt.clf()
         dgp_plot.kalman_figure(dgp, res_syn, dyngp_test_x, label="GP", plot_P=True)
-        plt.savefig(f"{sim_name}/raw/run_{i}_pos_syn.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_pos_syn.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
         plt.clf()
         dgp_plot.kalman_state_figure(dgp, res_syn, dyngp_test_x, label="GP")
-        plt.savefig(f"{sim_name}/raw/run_{i}_state_syn.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_state_syn.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
 
-        plt.clf()
-        dgp_plot.kalman_figure(dgp, res_syn_no_P, dyngp_test_x, label="GP", plot_P=True)
-        plt.savefig(f"{sim_name}/raw/run_{i}_pos_syn_no_P.pdf", format="pdf", bbox_inches='tight')
-        plt.close()
-        plt.clf()
-        dgp_plot.kalman_state_figure(dgp, res_syn_no_P, dyngp_test_x, label="GP")
-        plt.savefig(f"{sim_name}/raw/run_{i}_state_syn_no_P.pdf", format="pdf", bbox_inches='tight')
-        plt.close()
+        #plt.clf()
+        #dgp_plot.kalman_figure(dgp, res_syn_no_P, dyngp_test_x, label="GP", plot_P=True)
+        #plt.savefig(f"{sim_name}/raw/run_{i}_pos_syn_no_P.pdf", format="pdf", bbox_inches='tight')
+        #plt.close()
+        #plt.clf()
+        #dgp_plot.kalman_state_figure(dgp, res_syn_no_P, dyngp_test_x, label="GP")
+        #plt.savefig(f"{sim_name}/raw/run_{i}_state_syn_no_P.pdf", format="pdf", bbox_inches='tight')
+        #plt.close()
 
         plt.clf()
         dgp_plot.kalman_figure(dgp, res, dyngp_test_x, label="GP", plot_P=True)
-        plt.savefig(f"{sim_name}/raw/run_{i}_pos_no_pdaf.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_pos_no_pdaf.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
         plt.clf()
         dgp_plot.kalman_state_figure(dgp, res, dyngp_test_x, label="GP")
-        plt.savefig(f"{sim_name}/raw/run_{i}_state_no_pdaf.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_state_no_pdaf.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
         
         plt.clf()
         dgp_plot.kalman_figure(cog_dgp, cog_res_pdaf, dyngp_test_x, label="GP", plot_P=True)
-        plt.savefig(f"{sim_name}/raw/run_{i}_pos_pdaf_cog.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_pos_pdaf_cog.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
         plt.clf()
         dgp_plot.kalman_state_figure(cog_dgp, cog_res_pdaf, dyngp_test_x, label="GP")
-        plt.savefig(f"{sim_name}/raw/run_{i}_state_pdaf_cog.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_state_pdaf_cog.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
 
-        plt.clf()
-        dgp_plot.kalman_figure(cog_dgp, cog_res_pdaf_no_P, dyngp_test_x, label="GP", plot_P=True)
-        plt.savefig(f"{sim_name}/raw/run_{i}_pos_pdaf_no_P_cog.pdf", format="pdf", bbox_inches='tight')
-        plt.close()
-        plt.clf()
-        dgp_plot.kalman_state_figure(cog_dgp, cog_res_pdaf_no_P, dyngp_test_x, label="GP")
-        plt.savefig(f"{sim_name}/raw/run_{i}_state_pdaf_no_P_cog.pdf", format="pdf", bbox_inches='tight')
-        plt.close()
+        #plt.clf()
+        #dgp_plot.kalman_figure(cog_dgp, cog_res_pdaf_no_P, dyngp_test_x, label="GP", plot_P=True)
+        #plt.savefig(f"{sim_name}/raw/run_{i}_pos_pdaf_no_P_cog.pdf", format="pdf", bbox_inches='tight')
+        #plt.close()
+        #plt.clf()
+        #dgp_plot.kalman_state_figure(cog_dgp, cog_res_pdaf_no_P, dyngp_test_x, label="GP")
+        #plt.savefig(f"{sim_name}/raw/run_{i}_state_pdaf_no_P_cog.pdf", format="pdf", bbox_inches='tight')
+        #plt.close()
 
         plt.clf()
         dgp_plot.kalman_figure(cog_dgp, cog_res_syn, dyngp_test_x, label="GP", plot_P=True)
-        plt.savefig(f"{sim_name}/raw/run_{i}_pos_syn_cog.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_pos_syn_cog.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
         plt.clf()
         dgp_plot.kalman_state_figure(cog_dgp, cog_res_syn, dyngp_test_x, label="GP")
-        plt.savefig(f"{sim_name}/raw/run_{i}_state_syn_cog.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_state_syn_cog.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
 
-        plt.clf()
-        dgp_plot.kalman_figure(cog_dgp, cog_res_syn_no_P, dyngp_test_x, label="GP", plot_P=True)
-        plt.savefig(f"{sim_name}/raw/run_{i}_pos_syn_no_P_cog.pdf", format="pdf", bbox_inches='tight')
-        plt.close()
-        plt.clf()
-        dgp_plot.kalman_state_figure(cog_dgp, cog_res_syn_no_P, dyngp_test_x, label="GP")
-        plt.savefig(f"{sim_name}/raw/run_{i}_state_syn_no_P_cog.pdf", format="pdf", bbox_inches='tight')
-        plt.close()
+        #plt.clf()
+        #dgp_plot.kalman_figure(cog_dgp, cog_res_syn_no_P, dyngp_test_x, label="GP", plot_P=True)
+        #plt.savefig(f"{sim_name}/raw/run_{i}_pos_syn_no_P_cog.pdf", format="pdf", bbox_inches='tight')
+        #plt.close()
+        #plt.clf()
+        #dgp_plot.kalman_state_figure(cog_dgp, cog_res_syn_no_P, dyngp_test_x, label="GP")
+        #plt.savefig(f"{sim_name}/raw/run_{i}_state_syn_no_P_cog.pdf", format="pdf", bbox_inches='tight')
+        #plt.close()
 
         plt.clf()
         dgp_plot.kalman_figure(cog_dgp, cog_res, dyngp_test_x, label="GP", plot_P=True)
-        plt.savefig(f"{sim_name}/raw/run_{i}_pos_no_pdaf_cog.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_pos_no_pdaf_cog.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
         plt.clf()
         dgp_plot.kalman_state_figure(cog_dgp, cog_res, dyngp_test_x, label="GP")
-        plt.savefig(f"{sim_name}/raw/run_{i}_state_no_pdaf_cog.pdf", format="pdf", bbox_inches='tight')
+        plt.savefig(f"{sim_name}/raw/run_{i}_state_no_pdaf_cog.pdf", format="pdf", bbox_inches='tight', dpi=300)
         plt.close()
         
         print("Completed", i, "with stats:")
@@ -520,7 +520,7 @@ def run(i):
         return None
     return temp_df.copy()
 
-with Pool(8) as pool:
+with Pool(4) as pool:
     results_df = pool.map(run, list(range(msk.shape[0])))
 print(results_df)
 

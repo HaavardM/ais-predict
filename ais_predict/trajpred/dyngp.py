@@ -165,8 +165,7 @@ def _synthetic_update(x_hat: np.ndarray, P_hat: np.ndarray, z: np.ndarray, R: np
 
     dist = z - x_hat
     dist = np.linalg.norm(dist, axis=1)
-    S = P_hat + R  # (2 x 2)
-    W = np.linalg.solve(S.T, P_hat.T).T
+
 
     #print(0, x_hat)
     #print(1, np.sort(dist)[:5])
@@ -181,6 +180,9 @@ def _synthetic_update(x_hat: np.ndarray, P_hat: np.ndarray, z: np.ndarray, R: np
         return x_hat, P_hat
     median = z.mean(axis=0) # z[ix[len(ix) // 2]]
 
+    S = P_hat + R / z.shape[0]  
+    #print(R / z.shape[0])# (2 x 2)
+    W = np.linalg.solve(S.T, P_hat.T).T
     #print(3,mean, x_hat)
     #print(4, W @ (mean - x_hat))
     x = x_hat + W @ (median - x_hat)
@@ -247,8 +249,8 @@ def get_default_mle_params(train_x: np.ndarray, train_y: np.ndarray, return_scor
 
 
     """
-    kernel = kernels.ConstantKernel(1.0) * kernels.RBF(length_scale=[4000.0, 4000.0, 1000.0], length_scale_bounds=(10, 1000)) \
-        + kernels.WhiteKernel(noise_level_bounds=(0.0001, 10))
+    kernel = kernels.ConstantKernel(1.0) * kernels.RBF(length_scale=[4000.0, 4000.0, 1000.0], length_scale_bounds=(50, 1000)) \
+        + kernels.WhiteKernel(noise_level_bounds=(0.01, 10))
 
     if "n_restarts_optimizer" not in kwargs:
         kwargs["n_restarts_optimizer"] = 10
@@ -267,12 +269,12 @@ def get_default_mle_params(train_x: np.ndarray, train_y: np.ndarray, return_scor
             p["k1__k1"].constant_value,
         ]),
         noise=p["k2"].noise_level,
-        pdaf_R=np.eye(2) * 50**2,
+        pdaf_R=np.eye(2) * 500**2,
         pdaf_p_d=0.8,
         pdaf_clutter_rate=2e-3,
         pdaf_gate_size=2.0,
-        synthetic_search_radius= 500,
-        synthetic_R=np.eye(2) * 2000**2
+        synthetic_search_radius= 50,
+        synthetic_R=np.eye(2) * 500**2
     )
 
     if return_score:
